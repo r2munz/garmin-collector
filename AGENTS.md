@@ -4,7 +4,7 @@ Instructions for humans and coding agents working in **garmin-collector**.
 
 ## What this project does
 
-Syncs Garmin Connect activities via the [`garminconnect`](https://github.com/cyberjunky/python-garminconnect) library into **monthly** Markdown files (`activities_YYYY-MM.md`), with enriched sections (weather, elevation, splits, zones, gear) and **upsert by activity ID** so cloud edits replace the stored block (manual session notes are kept). Sync uses a date range: first run (no monthly files yet) defaults to **Jan 1 of the current year → today**; later runs default to the **last 7 days**. Session tokens are cached on disk when possible.
+Syncs Garmin Connect activities via the [`garminconnect`](https://github.com/cyberjunky/python-garminconnect) library into **monthly** Markdown files (`activities_YYYY-MM.md`), with enriched sections (weather, elevation, splits, zones, gear) and **upsert by activity ID** so cloud edits replace the stored block (manual session notes are kept). Within each month, activities are ordered **newest first** (start time descending). Sync uses a date range: first run (no monthly files yet) defaults to **Jan 1 of the current year → today**; later runs default to the **last 7 days**. Session tokens are cached on disk when possible.
 
 ## Repository layout
 

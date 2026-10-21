@@ -82,7 +82,10 @@ def _section_start_sort_key(section: str) -> tuple[datetime, str]:
 def _render_monthly_file(preamble: str, sections: list[tuple[str, str]]) -> str:
     if not sections:
         return preamble if preamble.endswith("\n") else preamble + "\n"
-    sections = sorted(sections, key=lambda item: _section_start_sort_key(item[1]))
+    # Newest first — better for coaching/RAG when context is truncated from the top.
+    sections = sorted(
+        sections, key=lambda item: _section_start_sort_key(item[1]), reverse=True
+    )
     body = "\n---\n\n".join(section.rstrip() for _, section in sections)
     return preamble.rstrip() + "\n\n" + body + "\n"
 
