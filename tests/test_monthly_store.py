@@ -67,6 +67,21 @@ def test_upsert_preserves_session_notes_on_update(tmp_path):
     assert "My note." in content
 
 
+def test_render_sorts_sections_by_activity_start_time(tmp_path):
+    preamble = monthly_file_header("2026-10")
+    early = (
+        "## Early\n<!-- garmin-activity-id: 1 -->\n\n"
+        "### Summary\n- **Date and time (local):** 2026-10-01 08:00:00\n"
+    )
+    late = (
+        "## Late\n<!-- garmin-activity-id: 2 -->\n\n"
+        "### Summary\n- **Date and time (local):** 2026-10-21 08:00:00\n"
+    )
+    raw = _render_monthly_file(preamble, [("2", late), ("1", early)])
+    _, sections = _parse_monthly_content(raw)
+    assert [aid for aid, _ in sections] == ["1", "2"]
+
+
 def test_upsert_moves_activity_between_months(tmp_path):
     out = str(tmp_path)
     jan_section = "## Old\n<!-- garmin-activity-id: 5 -->\n\nJan\n"

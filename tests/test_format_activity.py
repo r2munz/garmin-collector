@@ -4,6 +4,7 @@ from garmin_collector.format_activity import (
     format_activity_section,
     format_pace_per_km,
     format_time,
+    format_weather_block,
     merge_session_notes,
 )
 
@@ -25,6 +26,24 @@ def test_weather_temp_metric_converts_from_fahrenheit():
 
 def test_weather_temp_imperial():
     assert _weather_temp(35, "imperial") == "35.0 °F"
+
+
+def test_format_weather_block_null_wind_compass():
+    lines = format_weather_block(
+        {
+            "temp": 40,
+            "apparentTemp": 38,
+            "relativeHumidity": 50,
+            "windSpeed": 2,
+            "windDirectionCompassPoint": None,
+            "windDirection": None,
+            "weatherTypeDTO": {"desc": "Cloudy"},
+        },
+        "metric",
+    )
+    text = "\n".join(lines)
+    assert "from —" in text
+    assert ".upper" not in text
 
 
 def test_merge_session_notes_keeps_user_text():

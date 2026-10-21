@@ -11,11 +11,13 @@ Syncs Garmin Connect activities via the [`garminconnect`](https://github.com/cyb
 | Path | Purpose |
 |------|---------|
 | `src/garmin_collector/main.py` | Entry point: login, fetch activities, write `.md` files |
+| `src/garmin_collector/openwebui_sync.py` | Optional push of monthly `.md` to Open WebUI Knowledge |
+| `src/garmin_collector/paths.py` | Output paths (`OUTPUT_DIR`, knowledge-id / KB folder layout) |
 | `pyproject.toml` / `pdm.lock` | Dependencies and PDM scripts (Python **3.11** only) |
 | `.env.example` | Template for local env vars (copy to `.env`, never commit `.env`) |
 | `Dockerfile` / `docker-compose.yml` | Containerized one-shot sync (`/data`, `/tokens` volumes) |
 
-Unit tests live under `tests/`; run `pdm run test`. Prefer extending tests when changing `format_activity`, `monthly_store`, or sync-window logic.
+Unit tests live under `tests/`; run `pdm run test`. Prefer extending tests when changing `format_activity`, `monthly_store`, `openwebui_sync`, or sync-window logic.
 
 ## Commands
 
@@ -47,6 +49,11 @@ After changing dependencies, run `pdm lock` / `pdm install` locally and ensure `
 | `TOKEN_DIR` | no | `/tokens` | Persisted `garth` session tokens |
 | `SYNC_START` / `SYNC_END` | no | — | Inclusive window (`YYYY-MM-DD`); overrides lookback / first-sync defaults |
 | `SYNC_LOOKBACK_DAYS` | no | `7` | Incremental window when monthly files already exist; default set in `docker-compose.yml` for Docker |
+| `OPENWEBUI_BASE_URL` / `OPENWEBUI_API_KEY` / `OPENWEBUI_KNOWLEDGE_ID` | no | — | After collect, sync `activities_*.md` to Open WebUI Knowledge (`openwebui_sync.py`) |
+| `OPENWEBUI_KB_FOLDER` | no | — | KB subdirectory (e.g. `Activities`); manifest path `Folder/file.md` |
+| `OPENWEBUI_SYNC_ENABLED` | no | on when URL+key+ID set | Set `false` to disable vector push |
+| `OPENWEBUI_SYNC_ALL` | no | `false` | One-time backfill: upload every month Open WebUI diff wants |
+| `OPENWEBUI_SYNC_CLEANUP` | no | `false` | Mirror-delete remote files not in manifest (avoid on mixed KBs) |
 
 Local dev: use `./data` and `./tokens` (see `.env.example`). `load_dotenv()` runs at import time in `main.py`.
 

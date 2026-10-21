@@ -9,14 +9,16 @@ from garmin_collector.format_activity import format_activity_section
 from garmin_collector.monthly_store import (
     activity_month_key,
     has_existing_monthly_store,
+    monthly_file_path,
     upsert_activity_section,
 )
+from garmin_collector.openwebui_sync import maybe_sync_to_openwebui
+from garmin_collector.paths import resolve_output_dir
 
 load_dotenv()
 
 EMAIL = os.getenv("GARMIN_EMAIL")
 PASSWORD = os.getenv("GARMIN_PASSWORD")
-OUTPUT_DIR = os.getenv("OUTPUT_DIR", "/data")
 TOKEN_DIR = os.getenv("TOKEN_DIR", "/tokens")
 
 
@@ -110,12 +112,16 @@ def main() -> None:
         print("Error: GARMIN_EMAIL and GARMIN_PASSWORD environment variables are required.")
         return
 
-    os.makedirs(OUTPUT_DIR, exist_ok=True)
+    output_dir = resolve_output_dir()
+    os.makedirs(output_dir, exist_ok=True)
+    if output_dir != (os.getenv("OUTPUT_DIR") or "/data"):
+        print(f"Using knowledge-scoped output directory: {output_dir}")
+
     client = init_garmin()
     unit_system = client.get_unit_system()
 
     try:
-        start, end = resolve_sync_window(OUTPUT_DIR)
+        start, end = resolve_sync_window(output_dir)
     except ValueError as exc:
         print(f"Error: {exc}")
         return
@@ -127,16 +133,26 @@ def main() -> None:
     created = 0
     updated = 0
     skipped = 0
+    touched_monthly_files: set[str] = set()
     for act in activities:
-        result = sync_activity(client, OUTPUT_DIR, act, unit_system)
+        result = sync_activity(client, output_dir, act, unit_system)
         if result == "created":
             created += 1
         elif result == "updated":
             updated += 1
         else:
             skipped += 1
+        if result in ("created", "updated"):
+            month_key = activity_month_key(act.get("startTimeLocal"))
+            if month_key:
+                touched_monthly_files.add(os.path.basename(monthly_file_path(output_dir, month_key)))
 
     print(f"Done. Created {created}, updated {updated}, skipped {skipped}.")
+
+    try:
+        maybe_sync_to_openwebui(output_dir, touched_filenames=touched_monthly_files)
+    except Exception as exc:
+        print(f"Open WebUI sync failed: {exc}")
 
 
 if __name__ == "__main__":

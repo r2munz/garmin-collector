@@ -51,20 +51,28 @@ def _wind_speed(value: float | int | None, unit_system: str | None) -> str:
     return f"{float(value):.1f} mph"
 
 
+def _weather_compass(point: str | None) -> str:
+    if point is None or str(point).strip() == "":
+        return "—"
+    return str(point).upper()
+
+
 def format_weather_block(weather: dict[str, Any] | None, unit_system: str | None) -> list[str]:
     if not weather:
         return ["_No weather data from Garmin._"]
 
     wtype = weather.get("weatherTypeDTO") or {}
     condition = wtype.get("desc") or wtype.get("weatherTypePk") or "—"
+    wind_dir = weather.get("windDirection")
+    wind_dir_label = f"{wind_dir}°" if wind_dir is not None else "—"
     lines = [
         f"- **Conditions:** {condition}",
         f"- **Temperature:** {_weather_temp(weather.get('temp'), unit_system)}",
         f"- **Feels like:** {_weather_temp(weather.get('apparentTemp'), unit_system)}",
         f"- **Humidity:** {weather.get('relativeHumidity', '—')}%",
         f"- **Wind:** {_wind_speed(weather.get('windSpeed'), unit_system)} "
-        f"from {weather.get('windDirectionCompassPoint', '—').upper()} "
-        f"({weather.get('windDirection', '—')}°)",
+        f"from {_weather_compass(weather.get('windDirectionCompassPoint'))} "
+        f"({wind_dir_label})",
     ]
     gust = weather.get("windGust")
     if gust:

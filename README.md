@@ -43,19 +43,44 @@ pdm run collect
 
 In Cursor/VS Code, choose the interpreter: `.venv/bin/python`.
 
+## Open WebUI (optional vector / RAG sync)
+
+After each successful `pdm run collect`, you can push monthly Markdown files into an [Open WebUI](https://github.com/open-webui/open-webui) **Knowledge** base. The collector calls Open WebUI’s HTTP API (`sync/diff` → upload changed files → embed into the configured vector DB). Requires **Open WebUI ≥ 0.9.6** for incremental sync.
+
+1. In Open WebUI: create a Knowledge base and copy its ID; create an API key under **Settings → Account**.
+2. Set in `.env` (see `.env.example`):
+
+   - `OPENWEBUI_BASE_URL` — e.g. `http://localhost:3000`
+   - `OPENWEBUI_API_KEY`
+   - `OPENWEBUI_KNOWLEDGE_ID`
+   - `OPENWEBUI_SYNC_ENABLED=true` (optional; enabled automatically when all three are set)
+
+3. Run `pdm run collect` as usual. By default only **monthly files written in that run** are uploaded to Open WebUI (matches incremental Garmin lookback). Set **`OPENWEBUI_SYNC_ALL=true`** once to backfill every local month the server diff marks as out of date.
+
+With `OPENWEBUI_KNOWLEDGE_ID` set, monthly files are stored under **`OUTPUT_DIR/<OPENWEBUI_KNOWLEDGE_ID>/`** by default (`OPENWEBUI_KB_SUBDIR=true`). Use **`OPENWEBUI_KB_FOLDER`** (e.g. `Activities`) to match a folder inside that knowledge base; files are written locally under that name and uploaded with manifest paths like `Activities/activities_2026-01.md`. Set `OPENWEBUI_KB_SUBDIR=false` to skip the knowledge-id segment on disk.
+
+**Quick test** (narrow Garmin window, then vector push):
+
+```bash
+SYNC_START=2026-01-01 SYNC_END=2026-01-07 pdm run collect
+ls -la "./data/$OPENWEBUI_KNOWLEDGE_ID/"
+```
+
+If Open WebUI sync fails, Garmin export still completes; the error is logged at the end of the run.
+
 ## Docker
 
 ### Prerequisites
 
 1. Copy and edit credentials: `cp .env.example .env` (only `GARMIN_EMAIL` and `GARMIN_PASSWORD` are required for Compose).
-2. In `docker-compose.yml`, set the host path for your knowledge-base output (left side of the `/data` volume).
+2. Monthly files are stored on the **`garmin_data` Docker volume** at `/data` inside the container (`activities_YYYY-MM.md`). To use a host folder instead, replace `garmin_data:/data` with a bind mount in `docker-compose.yml`.
 3. Build and run:
 
 ```bash
 docker compose up --build
 ```
 
-Compose loads `.env` for credentials, sets container paths and **sync defaults** in `docker-compose.yml` (`OUTPUT_DIR`, `TOKEN_DIR`, `SYNC_LOOKBACK_DAYS`, optional `SYNC_START` / `SYNC_END`), and persists Garmin session tokens in `./garmin_tokens` on the host.
+Compose loads `.env` for credentials, sets container paths and **sync defaults** in `docker-compose.yml` (`OUTPUT_DIR`, `TOKEN_DIR`, `SYNC_LOOKBACK_DAYS`, optional `SYNC_START` / `SYNC_END`), and persists data on named volumes `garmin_data` (Markdown KB) and `garmin_tokens` (login).
 
 ### First sync (year to date) then incremental (last 7 days)
 
@@ -85,16 +110,17 @@ The collector picks the date window automatically from what is already on disk. 
 
    Each run only queries Garmin for the last seven days and upserts activities in the monthly Markdown files. Leave `SYNC_START` / `SYNC_END` empty in `docker-compose.yml` (default) for automatic first-sync / lookback behavior.
 
-Example cron (daily at 06:00, from the project directory):
+Example **hourly** cron (set `SYNC_LOOKBACK_DAYS=2` in `.env` for a narrow Garmin window):
 
 ```cron
-0 6 * * * cd /path/to/garmin-collector && docker compose run --rm garmin-collector >> /var/log/garmin-collector.log 2>&1
+0 * * * * cd /path/to/garmin-collector && docker compose run --rm garmin-collector >> /var/log/garmin-collector.log 2>&1
 ```
 
 ### Overrides (optional)
 
 Edit `docker-compose.yml` defaults or set the same variables in host `.env` (Compose substitution picks them up):
 
+- `SYNC_LOOKBACK_DAYS=2` — narrower incremental window (e.g. hourly schedule).
 - `SYNC_LOOKBACK_DAYS=14` — wider incremental window after the first sync.
 - `SYNC_START=2025-01-01` and `SYNC_END=2025-10-21` — fixed range; ignores first-sync / lookback logic.
 

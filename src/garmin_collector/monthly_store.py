@@ -5,6 +5,7 @@ from __future__ import annotations
 import os
 import re
 from calendar import month_name
+from datetime import datetime
 
 from garmin_collector.format_activity import merge_session_notes
 
@@ -16,6 +17,9 @@ def monthly_file_header(month_key: str) -> str:
 
 MONTHLY_FILE_PATTERN = re.compile(r"^activities_(\d{4})-(\d{2})\.md$")
 ACTIVITY_ID_MARKER = re.compile(r"<!--\s*garmin-activity-id:\s*(\d+)\s*-->")
+ACTIVITY_START_LOCAL = re.compile(
+    r"\*\*Date and time \(local\):\*\*\s+(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2})"
+)
 SECTION_SPLIT = re.compile(r"(?=^## )", re.MULTILINE)
 
 
@@ -65,9 +69,20 @@ def _parse_monthly_content(content: str) -> tuple[str, list[tuple[str, str]]]:
     return preamble, sections
 
 
+def _section_start_sort_key(section: str) -> tuple[datetime, str]:
+    match = ACTIVITY_START_LOCAL.search(section)
+    if match:
+        try:
+            return datetime.strptime(match.group(1), "%Y-%m-%d %H:%M:%S"), ""
+        except ValueError:
+            pass
+    return datetime.max, section
+
+
 def _render_monthly_file(preamble: str, sections: list[tuple[str, str]]) -> str:
     if not sections:
         return preamble if preamble.endswith("\n") else preamble + "\n"
+    sections = sorted(sections, key=lambda item: _section_start_sort_key(item[1]))
     body = "\n---\n\n".join(section.rstrip() for _, section in sections)
     return preamble.rstrip() + "\n\n" + body + "\n"
 
