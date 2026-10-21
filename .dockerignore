@@ -1,0 +1,14 @@
+.git
+.venv
+__pycache__
+*.pyc
+.env
+.env.*
+!.env.example
+data/
+output/
+tokens/
+garmin_tokens/
+.pdm-python
+__pypackages__
+.DS_Store

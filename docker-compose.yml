@@ -1,0 +1,22 @@
+services:
+  garmin-collector:
+    build: .
+    container_name: garmin-collector
+    env_file:
+      - .env
+    environment:
+      - OUTPUT_DIR=/data
+      - TOKEN_DIR=/tokens
+      # Sync window (see README § Docker). Values can be overridden in `.env` on the host.
+      # Unset SYNC_START / SYNC_END → first run: Jan 1 → today; later runs: last N days.
+      - SYNC_LOOKBACK_DAYS=${SYNC_LOOKBACK_DAYS:-7}
+      - SYNC_START=${SYNC_START:-}
+      - SYNC_END=${SYNC_END:-}
+    volumes:
+      # Set the left side to the absolute path of your knowledge-base output on the host
+      - /path/on/your/server/knowledge_base/garmin_history:/data
+      # Persist Garmin session tokens between runs
+      - ./garmin_tokens:/tokens
+    # Uncomment below for automatic retries (e.g. with Watchtower or an external scheduler).
+    # By default the container exits when the sync finishes.
+    # restart: on-failure

@@ -1,0 +1,32 @@
+[project]
+name = "garmin-collector"
+version = "0.1.0"
+description = "Collects Garmin user data and stores it"
+authors = [
+    {name = "David Munao", email = "dmunao@redhat.com"},
+]
+dependencies = ["garminconnect>=0.3.2", "python-dotenv>=1.2.4"]
+requires-python = "==3.11.*"
+readme = "README.md"
+license = {text = "MIT"}
+
+
+[tool.pdm]
+distribution = false
+venv.in_project = true
+
+[tool.pdm.build]
+package-dir = "src"
+
+[tool.pdm.scripts]
+collect = {call = "garmin_collector.main:main", env = {PYTHONPATH = "src"}}
+test = {cmd = "pytest", env = {PYTHONPATH = "src"}}
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]
+
+[dependency-groups]
+dev = [
+    "pytest>=9.1.1",
+]
