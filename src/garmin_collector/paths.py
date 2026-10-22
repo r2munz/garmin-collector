@@ -24,6 +24,18 @@ def knowledge_relative_path(relative_path: str) -> str:
     return relative_path
 
 
+def knowledge_directory_path(store_parent_relpath: str) -> str:
+    """
+    Knowledge-base directory path for Open WebUI sync/diff (no filename).
+
+    ``store_parent_relpath`` is relative to the activity store root, e.g. ``2026/10``.
+    """
+    store_parent_relpath = store_parent_relpath.strip("/")
+    if not store_parent_relpath:
+        return knowledge_folder_name() or ""
+    return knowledge_relative_path(store_parent_relpath)
+
+
 def strip_kb_folder_prefix(path: str) -> str:
     """Drop leading KB folder segment from a manifest path returned by Open WebUI."""
     folder = knowledge_folder_name()

@@ -35,7 +35,7 @@ Docker:
 docker compose up --build
 ```
 
-**First sync vs incremental (Docker):** mount an empty `/data` volume once → year-to-date; later runs with the same compose file → last 7 days. See `README.md` § Docker.
+**First sync vs incremental (Docker):** empty host data dir (`/opt/garmin-collector/data` by default) → year-to-date; later runs → last 7 days. See `README.md` § Docker (host data directory).
 
 After changing dependencies, run `pdm lock` / `pdm install` locally and ensure `docker build` still succeeds.
 

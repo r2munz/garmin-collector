@@ -13,16 +13,13 @@ services:
       - SYNC_START=${SYNC_START:-}
       - SYNC_END=${SYNC_END:-}
     volumes:
-      # Per-activity Markdown (YYYY/MM/{type}_{id}.md) — persists across container runs
-      - garmin_data:/data
+      # Activity Markdown on the host (rclone, backups, inspection). Create dir before first run.
+      - /opt/garmin-collector/data:/data
       # Garmin session tokens
       - garmin_tokens:/tokens
-      # Alternative: mount a host folder instead of the named volume, e.g.:
-      # - /path/on/host/knowledge_base/garmin:/data
     # Uncomment below for automatic retries (e.g. with Watchtower or an external scheduler).
     # By default the container exits when the sync finishes.
     # restart: on-failure
 
 volumes:
-  garmin_data:
   garmin_tokens:

@@ -73,14 +73,29 @@ If Open WebUI sync fails, Garmin export still completes; the error is logged at 
 ### Prerequisites
 
 1. Copy and edit credentials: `cp .env.example .env` (only `GARMIN_EMAIL` and `GARMIN_PASSWORD` are required for Compose).
-2. Activity files are stored on the **`garmin_data` Docker volume** at `/data` inside the container (`YYYY/MM/YYYY-MM-DD_HH-MM-SS_{type}.md`, local start time). To use a host folder instead, replace `garmin_data:/data` with a bind mount in `docker-compose.yml`.
+2. Create the host data directory (see [Host data directory](#host-data-directory) below).
 3. Build and run:
 
 ```bash
 docker compose up --build
 ```
 
-Compose loads `.env` for credentials, sets container paths and **sync defaults** in `docker-compose.yml` (`OUTPUT_DIR`, `TOKEN_DIR`, `SYNC_LOOKBACK_DAYS`, optional `SYNC_START` / `SYNC_END`), and persists data on named volumes `garmin_data` (Markdown KB) and `garmin_tokens` (login).
+Compose loads `.env` for credentials, sets container paths and **sync defaults** in `docker-compose.yml` (`OUTPUT_DIR`, `TOKEN_DIR`, `SYNC_LOOKBACK_DAYS`, optional `SYNC_START` / `SYNC_END`), bind-mounts Markdown to `/opt/garmin-collector/data`, and keeps Garmin tokens on the `garmin_tokens` named volume.
+
+### Host data directory
+
+`docker-compose.yml` maps **`/opt/garmin-collector/data`** on the host to **`/data`** in the container. Activity Markdown is written under that tree (for example `…/data/<knowledge-id>/Activities/2026/10/…` when Open WebUI paths are configured).
+
+On the VM (or any host using the default compose file), create the directory once and give ownership to the user that runs `docker compose` and cron:
+
+```bash
+sudo mkdir -p /opt/garmin-collector/data
+sudo chown "$USER:$USER" /opt/garmin-collector/data
+```
+
+If cron runs as a different user, use that account instead of `$USER`. Docker must be able to write through the bind mount (same UID/GID as the user invoking compose is usually enough).
+
+To use another path (e.g. local dev), change the left side of the `volumes` entry in `docker-compose.yml`. The same host folder can be synced to Google Drive with **rclone** without changing the collector.
 
 ### First sync (year to date) then incremental (last 7 days)
 
@@ -93,7 +108,7 @@ The collector picks the date window automatically from what is already on disk. 
 
 **Recommended flow**
 
-1. **Prepare an empty data directory** on the host (or a new folder you mount to `/data`) so no prior activity store exists yet.
+1. **Prepare an empty data directory** (`mkdir` / `chown` above) so no prior activity store exists under `/opt/garmin-collector/data` yet.
 2. **First sync** — pull the year so far:
 
    ```bash

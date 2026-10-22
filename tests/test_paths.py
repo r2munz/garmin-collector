@@ -37,9 +37,10 @@ def test_resolve_output_dir_with_kb_folder(monkeypatch):
 
 
 def test_knowledge_relative_path(monkeypatch):
-    from garmin_collector.paths import knowledge_relative_path
+    from garmin_collector.paths import knowledge_directory_path, knowledge_relative_path
 
     monkeypatch.delenv("OPENWEBUI_KB_FOLDER", raising=False)
     assert knowledge_relative_path("activities_2026-01.md") == "activities_2026-01.md"
-    monkeypatch.setenv("OPENWEBUI_KB_FOLDER", "Activites")
-    assert knowledge_relative_path("activities_2026-01.md") == "Activites/activities_2026-01.md"
+    monkeypatch.setenv("OPENWEBUI_KB_FOLDER", "Activities")
+    assert knowledge_relative_path("2026/10/foo.md") == "Activities/2026/10/foo.md"
+    assert knowledge_directory_path("2026/10") == "Activities/2026/10"

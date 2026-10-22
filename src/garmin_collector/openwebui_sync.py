@@ -18,7 +18,11 @@ from garmin_collector.activity_store import (
     LEGACY_MONTHLY_FILE_PATTERN,
     LEGACY_PER_ACTIVITY_FILE_PATTERN,
 )
-from garmin_collector.paths import knowledge_folder_name, knowledge_relative_path, strip_kb_folder_prefix
+from garmin_collector.paths import (
+    knowledge_directory_path,
+    knowledge_folder_name,
+    strip_kb_folder_prefix,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -83,16 +87,28 @@ def _sync_all_monthly_files() -> bool:
     return os.getenv("OPENWEBUI_SYNC_ALL", "").lower() in ("1", "true", "yes")
 
 
-def _diff_paths(entries: list[Any] | None) -> list[str]:
-    paths: list[str] = []
+def _manifest_for_api(manifest: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    return [
+        {
+            "path": entry["path"],
+            "filename": entry["filename"],
+            "checksum": entry["checksum"],
+            "size": entry["size"],
+        }
+        for entry in manifest
+    ]
+
+
+def _diff_file_entries(entries: list[Any] | None) -> list[dict[str, Any]]:
+    """Normalize sync/diff added/modified entries to dicts with path + filename."""
+    normalized: list[dict[str, Any]] = []
     for entry in entries or []:
-        if isinstance(entry, str):
-            paths.append(entry)
-        elif isinstance(entry, dict):
-            value = entry.get("path") or entry.get("filename")
-            if value:
-                paths.append(str(value))
-    return paths
+        if isinstance(entry, dict) and entry.get("filename"):
+            normalized.append(entry)
+        elif isinstance(entry, str):
+            # Legacy: treat string as store-relative file path
+            normalized.append({"path": "", "filename": Path(entry).name})
+    return normalized
 
 
 def _diff_file_ids(entries: list[Any] | None) -> list[str]:
@@ -105,6 +121,15 @@ def _diff_file_ids(entries: list[Any] | None) -> list[str]:
     return ids
 
 
+def _store_relpath_from_diff_entry(entry: dict[str, Any]) -> str:
+    kb_dir = str(entry.get("path") or "")
+    store_dir = strip_kb_folder_prefix(kb_dir)
+    filename = str(entry.get("filename") or "")
+    if store_dir:
+        return f"{store_dir}/{filename}"
+    return filename
+
+
 def _replacement_file_ids(
     deleted_entries: list[Any] | None, upload_relpaths: set[str]
 ) -> list[str]:
@@ -114,10 +139,8 @@ def _replacement_file_ids(
     for entry in deleted_entries or []:
         if not isinstance(entry, dict) or not entry.get("file_id"):
             continue
-        raw = str(entry.get("path") or entry.get("filename") or "")
-        rel = strip_kb_folder_prefix(raw)
-        name = Path(rel).name
-        if rel in upload_relpaths or name in upload_names:
+        store_rel = _store_relpath_from_diff_entry(entry)
+        if store_rel in upload_relpaths or Path(store_rel).name in upload_names:
             ids.append(str(entry["file_id"]))
     return ids
 
@@ -143,17 +166,40 @@ def build_manifest(output_dir: Path) -> list[dict[str, Any]]:
             path = Path(root) / name
             if not path.is_file():
                 continue
-            relpath = path.relative_to(output_dir).as_posix()
+            store_relpath = path.relative_to(output_dir).as_posix()
+            store_parent = path.parent.relative_to(output_dir).as_posix()
+            if store_parent == ".":
+                store_parent = ""
             manifest.append(
                 {
-                    "path": knowledge_relative_path(relpath),
-                    "relpath": relpath,
+                    # Open WebUI: path = KB directory, filename = basename (see sync/diff).
+                    "path": knowledge_directory_path(store_parent),
+                    "store_relpath": store_relpath,
+                    "relpath": store_relpath,
                     "filename": name,
                     "checksum": sha256_file(path),
                     "size": path.stat().st_size,
                 }
             )
     return manifest
+
+
+def build_upload_metadata(
+    manifest_entry: dict[str, Any],
+    knowledge_id: str,
+    directory_id_by_path: dict[str, str],
+) -> dict[str, Any]:
+    """Upload into the directory given by manifest ``path`` (e.g. ``Activities/2026/10``)."""
+    metadata: dict[str, Any] = {
+        "knowledge_id": knowledge_id,
+        "file_hash": manifest_entry["checksum"],
+        "filename": manifest_entry["filename"],
+    }
+    kb_dir = manifest_entry.get("path") or ""
+    dir_id = directory_id_by_path.get(kb_dir)
+    if dir_id:
+        metadata["directory_id"] = dir_id
+    return metadata
 
 
 class OpenWebUIClient:
@@ -170,14 +216,47 @@ class OpenWebUIClient:
     def _url(self, path: str) -> str:
         return f"{self.config.base_url}{path}"
 
-    def sync_diff(self, manifest: list[dict[str, str]]) -> dict[str, Any]:
+    def sync_diff(self, manifest: list[dict[str, Any]]) -> dict[str, Any]:
         response = self._session.post(
             self._url(f"/api/v1/knowledge/{self.config.knowledge_id}/sync/diff"),
-            json={"manifest": manifest},
+            json={"manifest": _manifest_for_api(manifest)},
             timeout=60,
         )
         response.raise_for_status()
         return response.json()
+
+    def create_directory(self, name: str, parent_id: str | None = None) -> str:
+        body: dict[str, Any] = {"name": name}
+        if parent_id:
+            body["parent_id"] = parent_id
+        response = self._session.post(
+            self._url(f"/api/v1/knowledge/{self.config.knowledge_id}/dirs/create"),
+            json=body,
+            timeout=60,
+        )
+        response.raise_for_status()
+        payload = response.json()
+        dir_id = payload.get("id")
+        if not dir_id:
+            raise RuntimeError(f"Directory create response missing id: {payload}")
+        return str(dir_id)
+
+    def ensure_directories(self, diff: dict[str, Any]) -> dict[str, str]:
+        """Create directories listed in diff.mkdir; return path → directory_id map."""
+        directory_id_by_path: dict[str, str] = {
+            str(k): str(v) for k, v in (diff.get("directory_map") or {}).items()
+        }
+        mkdir_paths = diff.get("mkdir") or []
+        for dir_path in sorted((str(p) for p in mkdir_paths), key=lambda p: p.count("/")):
+            if dir_path in directory_id_by_path:
+                continue
+            segments = dir_path.split("/")
+            name = segments[-1]
+            parent_path = "/".join(segments[:-1])
+            parent_id = directory_id_by_path.get(parent_path) if parent_path else None
+            directory_id_by_path[dir_path] = self.create_directory(name, parent_id)
+            logger.info("Open WebUI: created directory %s", dir_path)
+        return directory_id_by_path
 
     def resolve_directory_id(self, diff: dict[str, Any]) -> str | None:
         """Map OPENWEBUI_KB_FOLDER (or OPENWEBUI_KB_DIRECTORY_ID) to a knowledge directory id."""
@@ -201,19 +280,11 @@ class OpenWebUIClient:
         self,
         file_path: Path,
         manifest_entry: dict[str, Any],
-        directory_id: str | None = None,
+        directory_id_by_path: dict[str, str],
     ) -> str:
-        metadata: dict[str, Any] = {
-            "knowledge_id": self.config.knowledge_id,
-            "file_hash": manifest_entry["checksum"],
-            "filename": manifest_entry["filename"],
-        }
-        if directory_id:
-            # Open WebUI places the file inside the folder when directory_id is set.
-            metadata["directory_id"] = directory_id
-            metadata["path"] = manifest_entry.get("relpath") or manifest_entry["filename"]
-        else:
-            metadata["path"] = manifest_entry["path"]
+        metadata = build_upload_metadata(
+            manifest_entry, self.config.knowledge_id, directory_id_by_path
+        )
         with file_path.open("rb") as handle:
             response = self._session.post(
                 self._url("/api/v1/files/"),
@@ -256,19 +327,16 @@ class OpenWebUIClient:
         response.raise_for_status()
 
 
-def paths_for_diff_names(output_dir: Path, diff_entries: list[Any]) -> list[Path]:
-    """Map KB-relative paths from sync/diff to local files in output_dir."""
+def paths_for_diff_entries(output_dir: Path, diff_entries: list[Any]) -> list[Path]:
+    """Map sync/diff file entries (KB dir path + filename) to local files."""
     paths: list[Path] = []
-    for rel_path in _diff_paths(diff_entries):
-        rel = strip_kb_folder_prefix(rel_path)
-        local = output_dir / rel
+    for entry in _diff_file_entries(diff_entries):
+        filename = entry["filename"]
+        kb_dir = entry.get("path") or ""
+        store_dir = strip_kb_folder_prefix(str(kb_dir))
+        local = (output_dir / store_dir / filename) if store_dir else (output_dir / filename)
         if local.is_file():
             paths.append(local)
-            continue
-        # Legacy flat monthly files at store root
-        fallback = output_dir / Path(rel).name
-        if fallback.is_file():
-            paths.append(fallback)
     return paths
 
 
@@ -305,10 +373,17 @@ def sync_output_dir_to_knowledge(
             ) from exc
         raise RuntimeError(f"Open WebUI sync/diff failed: {_http_error_detail(exc)}") from exc
 
-    to_upload_paths = paths_for_diff_names(
-        output_dir,
-        _diff_paths(diff.get("added")) + _diff_paths(diff.get("modified")),
+    try:
+        directory_id_by_path = client.ensure_directories(diff)
+    except requests.HTTPError as exc:
+        raise RuntimeError(
+            f"Open WebUI directory create failed: {_http_error_detail(exc)}"
+        ) from exc
+
+    diff_entries = _diff_file_entries(diff.get("added")) + _diff_file_entries(
+        diff.get("modified")
     )
+    to_upload_paths = paths_for_diff_entries(output_dir, diff_entries)
     seen_relpaths: set[str] = set()
     to_upload: list[Path] = []
     for path in to_upload_paths:
@@ -349,14 +424,17 @@ def sync_output_dir_to_knowledge(
     replace_ids = _replacement_file_ids(diff.get("deleted"), upload_relpaths)
     other_deleted_ids = [fid for fid in all_deleted_ids if fid not in replace_ids]
     rmdir_ids = _diff_file_ids(diff.get("rmdir"))
-    directory_id = client.resolve_directory_id(diff)
     folder = knowledge_folder_name()
-    if folder and directory_id:
-        logger.info("Open WebUI: target folder '%s' (directory_id=%s)", folder, directory_id)
-    elif folder and not directory_id:
+    if folder and folder in directory_id_by_path:
+        logger.info(
+            "Open WebUI: knowledge folder '%s' ready (directory_id=%s)",
+            folder,
+            directory_id_by_path[folder],
+        )
+    elif folder:
         logger.warning(
-            "Open WebUI: folder '%s' not found in directory_map; "
-            "files may land at knowledge root. Set OPENWEBUI_KB_DIRECTORY_ID if needed.",
+            "Open WebUI: folder '%s' missing from directory_map after mkdir; "
+            "create it in the KB UI or set OPENWEBUI_KB_DIRECTORY_ID.",
             folder,
         )
 
@@ -382,10 +460,11 @@ def sync_output_dir_to_knowledge(
         if not entry:
             logger.warning("Skipping upload; no manifest entry for %s", relpath)
             continue
-        target = f"{folder}/{relpath}" if folder else entry["path"]
+        kb_dir = entry.get("path") or ""
+        target = f"{kb_dir}/{entry['filename']}" if kb_dir else entry["filename"]
         logger.info("Open WebUI: uploading %s...", target)
         try:
-            file_id = client.upload_file(path, entry, directory_id=directory_id)
+            file_id = client.upload_file(path, entry, directory_id_by_path)
             client.wait_until_processed(file_id)
             uploaded += 1
         except requests.HTTPError as exc:
