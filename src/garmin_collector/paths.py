@@ -15,17 +15,29 @@ def knowledge_folder_name() -> str:
     return (os.getenv("OPENWEBUI_KB_FOLDER") or "").strip().strip("/")
 
 
-def knowledge_relative_path(filename: str) -> str:
+def knowledge_relative_path(relative_path: str) -> str:
     """Path of a file relative to the knowledge base root (for sync/diff API)."""
+    relative_path = relative_path.strip("/")
     folder = knowledge_folder_name()
     if folder:
-        return f"{folder}/{filename}"
-    return filename
+        return f"{folder}/{relative_path}"
+    return relative_path
+
+
+def strip_kb_folder_prefix(path: str) -> str:
+    """Drop leading KB folder segment from a manifest path returned by Open WebUI."""
+    folder = knowledge_folder_name()
+    if not folder:
+        return path.strip("/")
+    prefix = f"{folder}/"
+    if path.startswith(prefix):
+        return path[len(prefix) :]
+    return path.strip("/")
 
 
 def resolve_output_dir() -> str:
     """
-    Directory for monthly Markdown files on disk.
+    Directory for per-activity Markdown files on disk (YYYY/MM/*.md).
 
     With Open WebUI configured, defaults to
     OUTPUT_DIR/<OPENWEBUI_KNOWLEDGE_ID>/[<OPENWEBUI_KB_FOLDER>/].

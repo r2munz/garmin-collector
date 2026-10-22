@@ -13,8 +13,8 @@ from typing import Any
 
 import requests
 
-from garmin_collector.monthly_store import MONTHLY_FILE_PATTERN
-from garmin_collector.paths import knowledge_folder_name, knowledge_relative_path
+from garmin_collector.activity_store import ACTIVITY_FILE_PATTERN, LEGACY_MONTHLY_FILE_PATTERN
+from garmin_collector.paths import knowledge_folder_name, knowledge_relative_path, strip_kb_folder_prefix
 
 logger = logging.getLogger(__name__)
 
@@ -102,39 +102,49 @@ def _diff_file_ids(entries: list[Any] | None) -> list[str]:
 
 
 def _replacement_file_ids(
-    deleted_entries: list[Any] | None, manifest_filenames: set[str]
+    deleted_entries: list[Any] | None, upload_relpaths: set[str]
 ) -> list[str]:
-    """Remote file IDs to remove before upload (same monthly name, new checksum)."""
+    """Remote file IDs to remove before upload (same path, new checksum)."""
     ids: list[str] = []
+    upload_names = {Path(p).name for p in upload_relpaths}
     for entry in deleted_entries or []:
         if not isinstance(entry, dict) or not entry.get("file_id"):
             continue
-        name = entry.get("filename") or Path(str(entry.get("path", ""))).name
-        if name in manifest_filenames:
+        raw = str(entry.get("path") or entry.get("filename") or "")
+        rel = strip_kb_folder_prefix(raw)
+        name = Path(rel).name
+        if rel in upload_relpaths or name in upload_names:
             ids.append(str(entry["file_id"]))
     return ids
 
 
+def _is_activity_markdown(name: str) -> bool:
+    return bool(ACTIVITY_FILE_PATTERN.match(name) or LEGACY_MONTHLY_FILE_PATTERN.match(name))
+
+
 def build_manifest(output_dir: Path) -> list[dict[str, Any]]:
     """Manifest for Open WebUI sync/diff (path relative to KB root)."""
-    manifest: list[dict[str, str]] = []
+    manifest: list[dict[str, Any]] = []
     if not output_dir.is_dir():
         return manifest
 
-    for name in sorted(os.listdir(output_dir)):
-        if not MONTHLY_FILE_PATTERN.match(name):
-            continue
-        path = output_dir / name
-        if not path.is_file():
-            continue
-        manifest.append(
-            {
-                "path": knowledge_relative_path(name),
-                "filename": name,
-                "checksum": sha256_file(path),
-                "size": path.stat().st_size,
-            }
-        )
+    for root, _, files in os.walk(output_dir):
+        for name in sorted(files):
+            if not name.endswith(".md") or not _is_activity_markdown(name):
+                continue
+            path = Path(root) / name
+            if not path.is_file():
+                continue
+            relpath = path.relative_to(output_dir).as_posix()
+            manifest.append(
+                {
+                    "path": knowledge_relative_path(relpath),
+                    "relpath": relpath,
+                    "filename": name,
+                    "checksum": sha256_file(path),
+                    "size": path.stat().st_size,
+                }
+            )
     return manifest
 
 
@@ -193,7 +203,7 @@ class OpenWebUIClient:
         if directory_id:
             # Open WebUI places the file inside the folder when directory_id is set.
             metadata["directory_id"] = directory_id
-            metadata["path"] = manifest_entry["filename"]
+            metadata["path"] = manifest_entry.get("relpath") or manifest_entry["filename"]
         else:
             metadata["path"] = manifest_entry["path"]
         with file_path.open("rb") as handle:
@@ -242,9 +252,15 @@ def paths_for_diff_names(output_dir: Path, diff_entries: list[Any]) -> list[Path
     """Map KB-relative paths from sync/diff to local files in output_dir."""
     paths: list[Path] = []
     for rel_path in _diff_paths(diff_entries):
-        local = output_dir / Path(rel_path).name
+        rel = strip_kb_folder_prefix(rel_path)
+        local = output_dir / rel
         if local.is_file():
             paths.append(local)
+            continue
+        # Legacy flat monthly files at store root
+        fallback = output_dir / Path(rel).name
+        if fallback.is_file():
+            paths.append(fallback)
     return paths
 
 
@@ -254,9 +270,10 @@ def sync_output_dir_to_knowledge(
     touched_filenames: set[str] | frozenset[str] | None = None,
 ) -> dict[str, int]:
     """
-    Sync monthly Markdown files into Open WebUI.
+    Sync activity Markdown files into Open WebUI.
 
-    By default only uploads months written during this collect run (``touched_filenames``).
+    By default only uploads files written during this collect run (``touched_filenames`` as
+    paths relative to the activity store, e.g. ``2026/10/running_123.md``).
     Set OPENWEBUI_SYNC_ALL=true to upload every file the server diff marks added/modified.
 
     Uses knowledge sync/diff (Open WebUI >= 0.9.6) when available.
@@ -264,11 +281,11 @@ def sync_output_dir_to_knowledge(
     output_dir = Path(output_dir)
     manifest = build_manifest(output_dir)
     if not manifest:
-        print("Open WebUI: no monthly Markdown files to sync.")
+        logger.info("Open WebUI: no activity Markdown files to sync.")
         return {"uploaded": 0, "deleted": 0, "skipped": 0}
 
     client = OpenWebUIClient(config)
-    manifest_by_filename = {entry["filename"]: entry for entry in manifest}
+    manifest_by_relpath = {entry["relpath"]: entry for entry in manifest}
 
     try:
         diff = client.sync_diff(manifest)
@@ -284,56 +301,67 @@ def sync_output_dir_to_knowledge(
         output_dir,
         _diff_paths(diff.get("added")) + _diff_paths(diff.get("modified")),
     )
-    seen_names: set[str] = set()
+    seen_relpaths: set[str] = set()
     to_upload: list[Path] = []
     for path in to_upload_paths:
-        if path.name in seen_names:
+        relpath = path.relative_to(output_dir).as_posix()
+        if relpath in seen_relpaths:
             continue
-        seen_names.add(path.name)
+        seen_relpaths.add(relpath)
         to_upload.append(path)
 
     sync_all = _sync_all_monthly_files()
     if not sync_all and touched_filenames is not None:
         allow = set(touched_filenames)
         pending = len(to_upload)
-        to_upload = [path for path in to_upload if path.name in allow]
+        to_upload = [
+            path
+            for path in to_upload
+            if path.relative_to(output_dir).as_posix() in allow or path.name in allow
+        ]
         deferred = pending - len(to_upload)
         if deferred:
-            print(
-                f"Open WebUI: skipping {deferred} remote-out-of-date month(s) "
-                "(unchanged this run; set OPENWEBUI_SYNC_ALL=true for full KB backfill)."
+            logger.info(
+                "Open WebUI: skipping %s remote-out-of-date file(s) "
+                "(unchanged this run; set OPENWEBUI_SYNC_ALL=true for full KB backfill).",
+                deferred,
             )
         if to_upload:
-            names = ", ".join(sorted(p.name for p in to_upload))
-            print(f"Open WebUI: pushing {len(to_upload)} file(s) updated this collect run: {names}")
+            names = ", ".join(sorted(p.relative_to(output_dir).as_posix() for p in to_upload))
+            logger.info(
+                "Open WebUI: pushing %s file(s) updated this collect run: %s",
+                len(to_upload),
+                names,
+            )
     elif sync_all and to_upload:
-        print(f"Open WebUI: full sync — uploading {len(to_upload)} file(s) from diff.")
+        logger.info("Open WebUI: full sync — uploading %s file(s) from diff.", len(to_upload))
 
-    upload_filenames = {path.name for path in to_upload}
+    upload_relpaths = {path.relative_to(output_dir).as_posix() for path in to_upload}
     all_deleted_ids = _diff_file_ids(diff.get("deleted"))
-    replace_ids = _replacement_file_ids(diff.get("deleted"), upload_filenames)
+    replace_ids = _replacement_file_ids(diff.get("deleted"), upload_relpaths)
     other_deleted_ids = [fid for fid in all_deleted_ids if fid not in replace_ids]
     rmdir_ids = _diff_file_ids(diff.get("rmdir"))
     directory_id = client.resolve_directory_id(diff)
     folder = knowledge_folder_name()
     if folder and directory_id:
-        print(f"Open WebUI: target folder '{folder}' (directory_id={directory_id})")
+        logger.info("Open WebUI: target folder '%s' (directory_id=%s)", folder, directory_id)
     elif folder and not directory_id:
-        print(
-            f"Open WebUI: warning — folder '{folder}' not found in directory_map; "
-            "files may land at knowledge root. Set OPENWEBUI_KB_DIRECTORY_ID if needed."
+        logger.warning(
+            "Open WebUI: folder '%s' not found in directory_map; "
+            "files may land at knowledge root. Set OPENWEBUI_KB_DIRECTORY_ID if needed.",
+            folder,
         )
 
     if not to_upload:
         unmodified = int(diff.get("unmodified_count", 0))
-        print(f"Open WebUI: nothing to upload ({unmodified} unchanged on server).")
+        logger.info("Open WebUI: nothing to upload (%s unchanged on server).", unmodified)
         return {"uploaded": 0, "deleted": 0, "skipped": unmodified}
 
     removed = 0
     if replace_ids:
-        print(
-            f"Open WebUI: removing {len(replace_ids)} superseded remote copie(s) "
-            f"for file(s) being uploaded..."
+        logger.info(
+            "Open WebUI: removing %s superseded remote copie(s) for file(s) being uploaded...",
+            len(replace_ids),
         )
         client.sync_cleanup(replace_ids, [])
         removed += len(replace_ids)
@@ -341,12 +369,13 @@ def sync_output_dir_to_knowledge(
     upload_errors: list[str] = []
     uploaded = 0
     for path in to_upload:
-        entry = manifest_by_filename.get(path.name)
+        relpath = path.relative_to(output_dir).as_posix()
+        entry = manifest_by_relpath.get(relpath)
         if not entry:
-            logger.warning("Skipping upload; no manifest entry for %s", path.name)
+            logger.warning("Skipping upload; no manifest entry for %s", relpath)
             continue
-        target = f"{folder}/{entry['filename']}" if folder else entry["path"]
-        print(f"Open WebUI: uploading {target}...")
+        target = f"{folder}/{relpath}" if folder else entry["path"]
+        logger.info("Open WebUI: uploading %s...", target)
         try:
             file_id = client.upload_file(path, entry, directory_id=directory_id)
             client.wait_until_processed(file_id)
@@ -360,23 +389,27 @@ def sync_output_dir_to_knowledge(
 
     if other_deleted_ids or rmdir_ids:
         if _sync_cleanup_enabled():
-            print(
-                f"Open WebUI: mirror cleanup of {len(other_deleted_ids)} other file(s), "
-                f"{len(rmdir_ids)} directory(ies)..."
+            logger.info(
+                "Open WebUI: mirror cleanup of %s other file(s), %s directory(ies)...",
+                len(other_deleted_ids),
+                len(rmdir_ids),
             )
             client.sync_cleanup(other_deleted_ids, rmdir_ids)
             removed += len(other_deleted_ids)
         elif other_deleted_ids:
-            print(
-                "Open WebUI: skipping mirror cleanup of "
-                f"{len(other_deleted_ids)} non-Garmin file(s) "
-                "(set OPENWEBUI_SYNC_CLEANUP=true to remove them)."
+            logger.info(
+                "Open WebUI: skipping mirror cleanup of %s non-Garmin file(s) "
+                "(set OPENWEBUI_SYNC_CLEANUP=true to remove them).",
+                len(other_deleted_ids),
             )
 
     unmodified = int(diff.get("unmodified_count", 0))
-    print(
-        f"Open WebUI sync done. Uploaded {uploaded}/{len(to_upload)}, "
-        f"removed {removed} remote file(s), {unmodified} unchanged on server."
+    logger.info(
+        "Open WebUI sync done. Uploaded %s/%s, removed %s remote file(s), %s unchanged on server.",
+        uploaded,
+        len(to_upload),
+        removed,
+        unmodified,
     )
     if upload_errors:
         detail = "; ".join(upload_errors)
@@ -397,7 +430,7 @@ def maybe_sync_to_openwebui(
     if config is None:
         return
     if not _sync_all_monthly_files() and not touched_filenames:
-        print("Open WebUI: no monthly files changed this run; skipping sync.")
+        logger.info("Open WebUI: no activity files changed this run; skipping sync.")
         return
-    print(f"Open WebUI: syncing knowledge base {config.knowledge_id}...")
+    logger.info("Open WebUI: syncing knowledge base %s...", config.knowledge_id)
     sync_output_dir_to_knowledge(config, output_dir, touched_filenames=touched_filenames)

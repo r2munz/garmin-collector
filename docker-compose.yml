@@ -13,7 +13,7 @@ services:
       - SYNC_START=${SYNC_START:-}
       - SYNC_END=${SYNC_END:-}
     volumes:
-      # Monthly Markdown KB (activities_YYYY-MM.md) — persists across container runs
+      # Per-activity Markdown (YYYY/MM/{type}_{id}.md) — persists across container runs
       - garmin_data:/data
       # Garmin session tokens
       - garmin_tokens:/tokens

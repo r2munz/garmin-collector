@@ -3,10 +3,13 @@
 from __future__ import annotations
 
 import json
+import re
 from datetime import datetime, timezone
 from typing import Any
 
 SESSION_NOTES_PLACEHOLDER = "*(Add recovery or subjective notes here.)*"
+SESSION_NOTES_HEADING = "### Session notes\n"
+ACTIVITY_ID_MARKER = re.compile(r"<!--\s*garmin-activity-id:\s*(\d+)\s*-->")
 
 
 def format_time(seconds: float | int | None) -> str:
@@ -245,7 +248,7 @@ def format_activity_section(
     activity_type = (act.get("activityType") or {}).get("typeKey")
 
     lines = [
-        f"## {act_name}",
+        f"# {act_name}",
         f"<!-- garmin-activity-id: {act_id} -->",
         f"<!-- garmin-activity-synced-at: {synced_at} -->",
         "",
@@ -293,27 +296,18 @@ def format_activity_section(
             "```json",
             json.dumps(snapshot, indent=2, ensure_ascii=False),
             "```",
-            "",
-            "### Session notes",
-            SESSION_NOTES_PLACEHOLDER,
-            "",
         ]
     )
-    return "\n".join(lines)
+    return "\n".join(lines).rstrip() + "\n"
 
 
-def merge_session_notes(previous_section: str | None, new_section: str) -> str:
+def merge_session_notes(previous_content: str | None, new_content: str) -> str:
     """Keep user-edited session notes when refreshing an activity from Garmin."""
-    if not previous_section:
-        return new_section
+    if not previous_content or SESSION_NOTES_HEADING not in previous_content:
+        return new_content
 
-    marker = "### Session notes\n"
-    if marker not in previous_section or marker not in new_section:
-        return new_section
-
-    old_notes = previous_section.split(marker, 1)[1].strip()
+    old_notes = previous_content.split(SESSION_NOTES_HEADING, 1)[1].strip()
     if not old_notes or old_notes == SESSION_NOTES_PLACEHOLDER:
-        return new_section
+        return new_content
 
-    head, _ = new_section.split(marker, 1)
-    return f"{head}{marker}{old_notes}\n\n"
+    return new_content.rstrip() + "\n\n" + SESSION_NOTES_HEADING + old_notes + "\n"

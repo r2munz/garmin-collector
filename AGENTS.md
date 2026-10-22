@@ -4,7 +4,7 @@ Instructions for humans and coding agents working in **garmin-collector**.
 
 ## What this project does
 
-Syncs Garmin Connect activities via the [`garminconnect`](https://github.com/cyberjunky/python-garminconnect) library into **monthly** Markdown files (`activities_YYYY-MM.md`), with enriched sections (weather, elevation, splits, zones, gear) and **upsert by activity ID** so cloud edits replace the stored block (manual session notes are kept). Within each month, activities are ordered **newest first** (start time descending). Sync uses a date range: first run (no monthly files yet) defaults to **Jan 1 of the current year → today**; later runs default to the **last 7 days**. Session tokens are cached on disk when possible.
+Syncs Garmin Connect activities via the [`garminconnect`](https://github.com/cyberjunky/python-garminconnect) library into **one Markdown file per activity** under `YYYY/MM/{type}_{activityId}.md`, with enriched sections (weather, elevation, splits, zones, gear). Cloud edits replace the file; user **session notes** are kept when present (empty placeholder is omitted). Sync uses a date range: first run (no monthly files yet) defaults to **Jan 1 of the current year → today**; later runs default to the **last 7 days**. Session tokens are cached on disk when possible.
 
 ## Repository layout
 
@@ -17,7 +17,7 @@ Syncs Garmin Connect activities via the [`garminconnect`](https://github.com/cyb
 | `.env.example` | Template for local env vars (copy to `.env`, never commit `.env`) |
 | `Dockerfile` / `docker-compose.yml` | Containerized one-shot sync (`/data`, `/tokens` volumes) |
 
-Unit tests live under `tests/`; run `pdm run test`. Prefer extending tests when changing `format_activity`, `monthly_store`, `openwebui_sync`, or sync-window logic.
+Unit tests live under `tests/`; run `pdm run test`. Prefer extending tests when changing `format_activity`, `activity_store`, `openwebui_sync`, or sync-window logic.
 
 ## Commands
 
@@ -45,7 +45,7 @@ After changing dependencies, run `pdm lock` / `pdm install` locally and ensure `
 |----------|----------|---------|--------|
 | `GARMIN_EMAIL` | yes | — | Garmin account email |
 | `GARMIN_PASSWORD` | yes | — | Garmin account password |
-| `OUTPUT_DIR` | no | `/data` | Monthly Markdown files (`activities_YYYY-MM.md`) |
+| `OUTPUT_DIR` | no | `/data` | Activity Markdown tree (`YYYY/MM/{type}_{id}.md`) |
 | `TOKEN_DIR` | no | `/tokens` | Persisted `garth` session tokens |
 | `SYNC_START` / `SYNC_END` | no | — | Inclusive window (`YYYY-MM-DD`); overrides lookback / first-sync defaults |
 | `SYNC_LOOKBACK_DAYS` | no | `7` | Incremental window when monthly files already exist; default set in `docker-compose.yml` for Docker |

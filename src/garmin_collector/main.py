@@ -6,16 +6,19 @@ from garminconnect import Garmin
 
 from garmin_collector.enrichment import fetch_activity_enrichment
 from garmin_collector.format_activity import format_activity_section
-from garmin_collector.monthly_store import (
+from garmin_collector.activity_store import (
     activity_month_key,
-    has_existing_monthly_store,
-    monthly_file_path,
-    upsert_activity_section,
+    activity_relpath,
+    has_existing_activity_store,
+    upsert_activity_file,
 )
+from garmin_collector.log import configure_logging, get_logger
 from garmin_collector.openwebui_sync import maybe_sync_to_openwebui
 from garmin_collector.paths import resolve_output_dir
 
 load_dotenv()
+
+logger = get_logger(__name__)
 
 EMAIL = os.getenv("GARMIN_EMAIL")
 PASSWORD = os.getenv("GARMIN_PASSWORD")
@@ -29,13 +32,13 @@ def init_garmin() -> Garmin:
     os.makedirs(TOKEN_DIR, exist_ok=True)
 
     try:
-        print("Attempting login with existing token...")
+        logger.info("Attempting login with existing token...")
         garmin.login(TOKEN_DIR)
     except Exception:
-        print("Token missing or invalid. Logging in with credentials...")
+        logger.info("Token missing or invalid. Logging in with credentials...")
         garmin.login()
         garmin.garth.dump(TOKEN_DIR)
-        print("New token saved successfully.")
+        logger.info("New token saved successfully.")
 
     return garmin
 
@@ -60,17 +63,17 @@ def resolve_sync_window(output_dir: str, today: date | None = None) -> tuple[dat
     if start_override:
         if start_override > end:
             raise ValueError(f"SYNC_START ({start_override}) must be on or before SYNC_END ({end})")
-        print(f"Sync window (from env): {start_override} through {end}")
+        logger.info("Sync window (from env): %s through %s", start_override, end)
         return start_override, end
 
-    if not has_existing_monthly_store(output_dir):
+    if not has_existing_activity_store(output_dir):
         start = start_of_current_year(today)
-        print(f"First sync (no monthly store): {start} through {end}")
+        logger.info("First sync (no activity store): %s through %s", start, end)
         return start, end
 
     lookback_days = int(os.getenv("SYNC_LOOKBACK_DAYS", "7"))
     start = end - timedelta(days=lookback_days)
-    print(f"Incremental sync (last {lookback_days} days): {start} through {end}")
+    logger.info("Incremental sync (last %s days): %s through %s", lookback_days, start, end)
     return start, end
 
 
@@ -92,30 +95,35 @@ def sync_activity(
     """Fetch enriched data and upsert one activity. Returns store action or None if skipped."""
     act_id = act.get("activityId")
     if act_id is None:
-        print("Skipping activity without activityId")
+        logger.info("Skipping activity without activityId")
         return None
 
     act_id_str = str(act_id)
     month_key = activity_month_key(act.get("startTimeLocal"))
     if not month_key:
-        print(f"Skipping activity {act_id_str}: missing or invalid startTimeLocal")
+        logger.info("Skipping activity %s: missing or invalid startTimeLocal", act_id_str)
         return None
 
     synced_at = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
     enrichment = fetch_activity_enrichment(client, act_id_str)
-    section = format_activity_section(act, enrichment, unit_system, synced_at=synced_at)
-    return upsert_activity_section(output_dir, month_key, act_id_str, section)
+    activity_type = (act.get("activityType") or {}).get("typeKey")
+    body = format_activity_section(act, enrichment, unit_system, synced_at=synced_at)
+    action, _relpath = upsert_activity_file(
+        output_dir, month_key, act_id_str, activity_type, body
+    )
+    return action
 
 
 def main() -> None:
+    configure_logging()
     if not EMAIL or not PASSWORD:
-        print("Error: GARMIN_EMAIL and GARMIN_PASSWORD environment variables are required.")
+        logger.error("GARMIN_EMAIL and GARMIN_PASSWORD environment variables are required.")
         return
 
     output_dir = resolve_output_dir()
     os.makedirs(output_dir, exist_ok=True)
     if output_dir != (os.getenv("OUTPUT_DIR") or "/data"):
-        print(f"Using knowledge-scoped output directory: {output_dir}")
+        logger.info("Using knowledge-scoped output directory: %s", output_dir)
 
     client = init_garmin()
     unit_system = client.get_unit_system()
@@ -123,18 +131,21 @@ def main() -> None:
     try:
         start, end = resolve_sync_window(output_dir)
     except ValueError as exc:
-        print(f"Error: {exc}")
+        logger.error("%s", exc)
         return
 
-    print("Fetching activities in range...")
+    logger.info("Fetching activities in range...")
     activities = fetch_activities_in_range(client, start, end)
-    print(f"Received {len(activities)} activities from Garmin.")
+    logger.info("Received %s activities from Garmin.", len(activities))
 
     created = 0
     updated = 0
     skipped = 0
-    touched_monthly_files: set[str] = set()
+    touched_files: set[str] = set()
     for act in activities:
+        act_id = act.get("activityId")
+        month_key = activity_month_key(act.get("startTimeLocal"))
+        activity_type = (act.get("activityType") or {}).get("typeKey")
         result = sync_activity(client, output_dir, act, unit_system)
         if result == "created":
             created += 1
@@ -142,17 +153,15 @@ def main() -> None:
             updated += 1
         else:
             skipped += 1
-        if result in ("created", "updated"):
-            month_key = activity_month_key(act.get("startTimeLocal"))
-            if month_key:
-                touched_monthly_files.add(os.path.basename(monthly_file_path(output_dir, month_key)))
+        if result in ("created", "updated") and month_key and act_id is not None:
+            touched_files.add(activity_relpath(month_key, activity_type, str(act_id)))
 
-    print(f"Done. Created {created}, updated {updated}, skipped {skipped}.")
+    logger.info("Done. Created %s, updated %s, skipped %s.", created, updated, skipped)
 
     try:
-        maybe_sync_to_openwebui(output_dir, touched_filenames=touched_monthly_files)
+        maybe_sync_to_openwebui(output_dir, touched_filenames=touched_files)
     except Exception as exc:
-        print(f"Open WebUI sync failed: {exc}")
+        logger.error("Open WebUI sync failed: %s", exc)
 
 
 if __name__ == "__main__":

@@ -47,17 +47,19 @@ def test_format_weather_block_null_wind_compass():
 
 
 def test_merge_session_notes_keeps_user_text():
-    old = f"## Run\n\n### Session notes\nLegs felt heavy.\n"
-    new = f"## Run\n\n### Session notes\n{SESSION_NOTES_PLACEHOLDER}\n"
+    old = "# Run\n\n### Session notes\nLegs felt heavy.\n"
+    new = "# Run\n\nFresh stats from Garmin.\n"
     merged = merge_session_notes(old, new)
     assert "Legs felt heavy." in merged
+    assert "Fresh stats from Garmin." in merged
     assert SESSION_NOTES_PLACEHOLDER not in merged
 
 
-def test_merge_session_notes_uses_placeholder_when_unchanged():
-    old = f"## Run\n\n### Session notes\n{SESSION_NOTES_PLACEHOLDER}\n"
-    new = f"## Run\n\n### Session notes\n{SESSION_NOTES_PLACEHOLDER}\n"
+def test_merge_session_notes_omits_placeholder_when_no_user_notes():
+    old = f"# Run\n\n### Session notes\n{SESSION_NOTES_PLACEHOLDER}\n"
+    new = "# Run\n\nUpdated body.\n"
     assert merge_session_notes(old, new) == new
+    assert "Session notes" not in merge_session_notes(old, new)
 
 
 def test_format_activity_section_includes_marker_and_snapshot():
@@ -106,3 +108,5 @@ def test_format_activity_section_includes_marker_and_snapshot():
     assert '"activity_id": 99' in text
     assert "Test Shoe" in text
     assert "5.00 km" in text
+    assert SESSION_NOTES_PLACEHOLDER not in text
+    assert text.startswith("# Test Run\n")
