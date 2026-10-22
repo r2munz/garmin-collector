@@ -18,36 +18,36 @@ def test_diff_path_and_file_id_helpers():
     assert _diff_file_ids([{"file_id": "abc"}]) == ["abc"]
     assert _replacement_file_ids(
         [
-            {"file_id": "old", "path": "Activities/2026/10/running_1.md"},
+            {"file_id": "old", "path": "Activities/2026/10/2026-10-21_08-00-00_running.md"},
             {"file_id": "profile", "filename": "Profilo.md"},
         ],
-        {"2026/10/running_1.md"},
+        {"2026/10/2026-10-21_08-00-00_running.md"},
     ) == ["old"]
 
 
 def test_paths_for_diff_names_nested(tmp_path, monkeypatch):
     monkeypatch.setenv("OPENWEBUI_KB_FOLDER", "Activities")
-    md = tmp_path / "2026" / "10" / "running_1.md"
+    md = tmp_path / "2026" / "10" / "2026-10-21_08-00-00_running.md"
     md.parent.mkdir(parents=True)
     md.write_text("x", encoding="utf-8")
     found = paths_for_diff_names(
-        tmp_path, [{"path": "Activities/2026/10/running_1.md"}]
+        tmp_path, [{"path": "Activities/2026/10/2026-10-21_08-00-00_running.md"}]
     )
     assert found == [md]
 
 
 def test_sha256_file_and_manifest(tmp_path, monkeypatch):
     monkeypatch.delenv("OPENWEBUI_KB_FOLDER", raising=False)
-    md = tmp_path / "2026" / "01" / "running_9.md"
+    md = tmp_path / "2026" / "01" / "2026-01-15_08-00-00_running.md"
     md.parent.mkdir(parents=True)
     md.write_text("# test\n", encoding="utf-8")
     checksum = sha256_file(md)
     manifest = build_manifest(tmp_path)
     assert manifest == [
         {
-            "path": "2026/01/running_9.md",
-            "relpath": "2026/01/running_9.md",
-            "filename": "running_9.md",
+            "path": "2026/01/2026-01-15_08-00-00_running.md",
+            "relpath": "2026/01/2026-01-15_08-00-00_running.md",
+            "filename": "2026-01-15_08-00-00_running.md",
             "checksum": checksum,
             "size": md.stat().st_size,
         }
@@ -56,12 +56,12 @@ def test_sha256_file_and_manifest(tmp_path, monkeypatch):
 
 def test_build_manifest_with_kb_folder(tmp_path, monkeypatch):
     monkeypatch.setenv("OPENWEBUI_KB_FOLDER", "Activities")
-    md = tmp_path / "2026" / "01" / "running_9.md"
+    md = tmp_path / "2026" / "01" / "2026-01-15_08-00-00_running.md"
     md.parent.mkdir(parents=True)
     md.write_text("# test\n", encoding="utf-8")
     manifest = build_manifest(tmp_path)
-    assert manifest[0]["path"] == "Activities/2026/01/running_9.md"
-    assert manifest[0]["relpath"] == "2026/01/running_9.md"
+    assert manifest[0]["path"] == "Activities/2026/01/2026-01-15_08-00-00_running.md"
+    assert manifest[0]["relpath"] == "2026/01/2026-01-15_08-00-00_running.md"
 
 
 def test_openwebui_config_from_env(monkeypatch):
@@ -87,7 +87,7 @@ def test_openwebui_config_from_env(monkeypatch):
 
 def test_sync_output_dir_uploads_modified(tmp_path, monkeypatch):
     monkeypatch.delenv("OPENWEBUI_KB_FOLDER", raising=False)
-    md = tmp_path / "2026" / "01" / "running_1.md"
+    md = tmp_path / "2026" / "01" / "2026-01-15_08-00-00_running.md"
     md.parent.mkdir(parents=True)
     md.write_text("# Activities\n", encoding="utf-8")
     config = OpenWebUIConfig(
@@ -100,7 +100,7 @@ def test_sync_output_dir_uploads_modified(tmp_path, monkeypatch):
     mock_client = MagicMock()
     mock_client.sync_diff.return_value = {
         "added": [],
-        "modified": ["2026/01/running_1.md"],
+        "modified": ["2026/01/2026-01-15_08-00-00_running.md"],
         "deleted": [],
         "rmdir": [],
         "unmodified_count": 0,
@@ -115,7 +115,7 @@ def test_sync_output_dir_uploads_modified(tmp_path, monkeypatch):
         return_value=mock_client,
     ):
         stats = sync_output_dir_to_knowledge(
-            config, tmp_path, touched_filenames={"2026/01/running_1.md"}
+            config, tmp_path, touched_filenames={"2026/01/2026-01-15_08-00-00_running.md"}
         )
 
     assert stats["uploaded"] == 1
@@ -126,8 +126,8 @@ def test_sync_output_dir_uploads_modified(tmp_path, monkeypatch):
 def test_sync_only_touched_files(tmp_path, monkeypatch):
     monkeypatch.delenv("OPENWEBUI_KB_FOLDER", raising=False)
     monkeypatch.delenv("OPENWEBUI_SYNC_ALL", raising=False)
-    jan = tmp_path / "2026" / "01" / "running_1.md"
-    oct_ = tmp_path / "2026" / "10" / "running_2.md"
+    jan = tmp_path / "2026" / "01" / "2026-01-01_08-00-00_running.md"
+    oct_ = tmp_path / "2026" / "10" / "2026-10-21_08-00-00_running.md"
     jan.parent.mkdir(parents=True)
     oct_.parent.mkdir(parents=True)
     jan.write_text("jan", encoding="utf-8")
@@ -141,11 +141,14 @@ def test_sync_only_touched_files(tmp_path, monkeypatch):
 
     mock_client = MagicMock()
     mock_client.sync_diff.return_value = {
-        "added": ["2026/01/running_1.md", "2026/10/running_2.md"],
+        "added": [
+            "2026/01/2026-01-01_08-00-00_running.md",
+            "2026/10/2026-10-21_08-00-00_running.md",
+        ],
         "modified": [],
         "deleted": [
-            {"file_id": "old-jan", "path": "2026/01/running_1.md"},
-            {"file_id": "old-oct", "path": "2026/10/running_2.md"},
+            {"file_id": "old-jan", "path": "2026/01/2026-01-01_08-00-00_running.md"},
+            {"file_id": "old-oct", "path": "2026/10/2026-10-21_08-00-00_running.md"},
         ],
         "rmdir": [],
         "unmodified_count": 0,
@@ -160,7 +163,7 @@ def test_sync_only_touched_files(tmp_path, monkeypatch):
         return_value=mock_client,
     ):
         stats = sync_output_dir_to_knowledge(
-            config, tmp_path, touched_filenames={"2026/10/running_2.md"}
+            config, tmp_path, touched_filenames={"2026/10/2026-10-21_08-00-00_running.md"}
         )
 
     assert stats["uploaded"] == 1

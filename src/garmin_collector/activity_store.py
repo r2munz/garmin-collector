@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 import os
 import re
+from datetime import datetime
 from pathlib import Path
 
 from garmin_collector.format_activity import merge_session_notes
@@ -12,12 +13,14 @@ from garmin_collector.format_activity import merge_session_notes
 logger = logging.getLogger(__name__)
 
 LEGACY_MONTHLY_FILE_PATTERN = re.compile(r"^activities_(\d{4})-(\d{2})\.md$")
-ACTIVITY_FILE_PATTERN = re.compile(r"^[a-z][a-z0-9_]*_\d+\.md$", re.IGNORECASE)
+ACTIVITY_FILE_PATTERN = re.compile(
+    r"^\d{4}-\d{2}-\d{2}_\d{2}-\d{2}-\d{2}_[a-z][a-z0-9_]+\.md$",
+    re.IGNORECASE,
+)
+LEGACY_PER_ACTIVITY_FILE_PATTERN = re.compile(r"^[a-z][a-z0-9_]*_\d+\.md$", re.IGNORECASE)
 
 
 def activity_month_key(start_time_local: str | None) -> str | None:
-    from datetime import datetime
-
     if not start_time_local:
         return None
     try:
@@ -34,17 +37,59 @@ def sanitize_activity_type(type_key: str | None) -> str:
     return slug or "activity"
 
 
-def activity_filename(activity_type: str | None, activity_id: str) -> str:
-    return f"{sanitize_activity_type(activity_type)}_{activity_id}.md"
+def _parse_start_local(start_time_local: str) -> datetime:
+    return datetime.strptime(start_time_local[:19], "%Y-%m-%d %H:%M:%S")
 
 
-def activity_relpath(month_key: str, activity_type: str | None, activity_id: str) -> str:
+def activity_filename(
+    start_time_local: str,
+    activity_type: str | None,
+    activity_id: str | None = None,
+) -> str:
+    """Local start date/time + type, e.g. ``2026-10-21_08-19-35_running.md``."""
+    dt = _parse_start_local(start_time_local)
+    stamp = dt.strftime("%Y-%m-%d_%H-%M-%S")
+    name = f"{stamp}_{sanitize_activity_type(activity_type)}.md"
+    if activity_id:
+        stem, ext = os.path.splitext(name)
+        return f"{stem}_{activity_id}{ext}"
+    return name
+
+
+def activity_relpath(
+    month_key: str,
+    start_time_local: str,
+    activity_type: str | None,
+    activity_id: str | None = None,
+) -> str:
     year, month = month_key.split("-")
-    return f"{year}/{month}/{activity_filename(activity_type, activity_id)}"
+    return f"{year}/{month}/{activity_filename(start_time_local, activity_type, activity_id)}"
 
 
-def activity_file_path(output_dir: str, month_key: str, activity_type: str | None, activity_id: str) -> str:
-    return os.path.join(output_dir, activity_relpath(month_key, activity_type, activity_id))
+def _is_activity_markdown(name: str) -> bool:
+    return bool(
+        ACTIVITY_FILE_PATTERN.match(name)
+        or LEGACY_PER_ACTIVITY_FILE_PATTERN.match(name)
+    )
+
+
+def resolve_activity_paths(
+    output_dir: str,
+    month_key: str,
+    start_time_local: str,
+    activity_type: str | None,
+    activity_id: str,
+) -> tuple[str, str]:
+    """Return (absolute path, relpath) for upsert."""
+    year, month = month_key.split("-")
+    dir_path = os.path.join(output_dir, year, month)
+    name = activity_filename(start_time_local, activity_type)
+    path = os.path.join(dir_path, name)
+    if os.path.isfile(path) and _activity_id_in_file(path) != activity_id:
+        name = activity_filename(start_time_local, activity_type, activity_id)
+        path = os.path.join(dir_path, name)
+    relpath = f"{year}/{month}/{name}"
+    return path, relpath
 
 
 def has_existing_activity_store(output_dir: str) -> bool:
@@ -56,7 +101,7 @@ def has_existing_activity_store(output_dir: str) -> bool:
             return True
     for root, _, files in os.walk(output_dir):
         for name in files:
-            if ACTIVITY_FILE_PATTERN.match(name):
+            if _is_activity_markdown(name):
                 return True
     return False
 
@@ -64,6 +109,15 @@ def has_existing_activity_store(output_dir: str) -> bool:
 def _read_file(path: str) -> str:
     with open(path, encoding="utf-8") as f:
         return f.read()
+
+
+def _activity_id_in_file(path: str) -> str | None:
+    try:
+        content = _read_file(path)
+    except OSError:
+        return None
+    match = re.search(r"<!--\s*garmin-activity-id:\s*(\d+)\s*-->", content)
+    return match.group(1) if match else None
 
 
 def _write_file(path: str, content: str) -> None:
@@ -74,12 +128,18 @@ def _write_file(path: str, content: str) -> None:
 
 def find_activity_paths(output_dir: str, activity_id: str) -> list[str]:
     """All stored paths for this activity id (normally zero or one)."""
+    marker = f"<!-- garmin-activity-id: {activity_id} -->"
     found: list[str] = []
-    suffix = f"_{activity_id}.md"
     for root, _, files in os.walk(output_dir):
         for name in files:
-            if name.endswith(suffix) and ACTIVITY_FILE_PATTERN.match(name):
-                found.append(os.path.join(root, name))
+            if not name.endswith(".md"):
+                continue
+            path = os.path.join(root, name)
+            try:
+                if marker in _read_file(path):
+                    found.append(path)
+            except OSError:
+                continue
     return found
 
 
@@ -96,6 +156,7 @@ def upsert_activity_file(
     output_dir: str,
     month_key: str,
     activity_id: str,
+    start_time_local: str,
     activity_type: str | None,
     body: str,
 ) -> tuple[str, str]:
@@ -103,8 +164,9 @@ def upsert_activity_file(
     Write one activity Markdown file.
     Returns (action, relpath) where action is 'created' or 'updated'.
     """
-    path = activity_file_path(output_dir, month_key, activity_type, activity_id)
-    relpath = activity_relpath(month_key, activity_type, activity_id)
+    path, relpath = resolve_activity_paths(
+        output_dir, month_key, start_time_local, activity_type, activity_id
+    )
     remove_stale_activity_files(output_dir, activity_id, path)
 
     previous: str | None = None

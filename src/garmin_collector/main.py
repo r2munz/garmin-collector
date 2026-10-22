@@ -8,7 +8,6 @@ from garmin_collector.enrichment import fetch_activity_enrichment
 from garmin_collector.format_activity import format_activity_section
 from garmin_collector.activity_store import (
     activity_month_key,
-    activity_relpath,
     has_existing_activity_store,
     upsert_activity_file,
 )
@@ -91,8 +90,8 @@ def sync_activity(
     output_dir: str,
     act: dict,
     unit_system: str | None,
-) -> str | None:
-    """Fetch enriched data and upsert one activity. Returns store action or None if skipped."""
+) -> tuple[str, str] | None:
+    """Fetch enriched data and upsert one activity. Returns (action, relpath) or None if skipped."""
     act_id = act.get("activityId")
     if act_id is None:
         logger.info("Skipping activity without activityId")
@@ -107,11 +106,11 @@ def sync_activity(
     synced_at = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
     enrichment = fetch_activity_enrichment(client, act_id_str)
     activity_type = (act.get("activityType") or {}).get("typeKey")
+    start_time_local = act.get("startTimeLocal") or ""
     body = format_activity_section(act, enrichment, unit_system, synced_at=synced_at)
-    action, _relpath = upsert_activity_file(
-        output_dir, month_key, act_id_str, activity_type, body
+    return upsert_activity_file(
+        output_dir, month_key, act_id_str, start_time_local, activity_type, body
     )
-    return action
 
 
 def main() -> None:
@@ -143,18 +142,16 @@ def main() -> None:
     skipped = 0
     touched_files: set[str] = set()
     for act in activities:
-        act_id = act.get("activityId")
-        month_key = activity_month_key(act.get("startTimeLocal"))
-        activity_type = (act.get("activityType") or {}).get("typeKey")
         result = sync_activity(client, output_dir, act, unit_system)
-        if result == "created":
-            created += 1
-        elif result == "updated":
-            updated += 1
-        else:
+        if result is None:
             skipped += 1
-        if result in ("created", "updated") and month_key and act_id is not None:
-            touched_files.add(activity_relpath(month_key, activity_type, str(act_id)))
+        else:
+            action, relpath = result
+            if action == "created":
+                created += 1
+            else:
+                updated += 1
+            touched_files.add(relpath)
 
     logger.info("Done. Created %s, updated %s, skipped %s.", created, updated, skipped)
 

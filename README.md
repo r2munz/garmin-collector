@@ -25,7 +25,7 @@ cp .env.example .env
 
 ## Run
 
-`pdm run collect` loads variables from `.env` in the project root (see `.env.example`). Each activity is written to **`YYYY/MM/{type}_{activityId}.md`** under `OUTPUT_DIR` (one file per workout, RAG-friendly). The first run syncs from 1 January of the current year; later runs use the last 7 days unless you set `SYNC_START` / `SYNC_END`.
+`pdm run collect` loads variables from `.env` in the project root (see `.env.example`). Each activity is written to **`YYYY/MM/YYYY-MM-DD_HH-MM-SS_{type}.md`** under `OUTPUT_DIR` (one file per workout, RAG-friendly). The first run syncs from 1 January of the current year; later runs use the last 7 days unless you set `SYNC_START` / `SYNC_END`.
 
 ```bash
 pdm run collect
@@ -57,7 +57,7 @@ After each successful `pdm run collect`, you can push activity Markdown files in
 
 3. Run `pdm run collect` as usual. By default only **activity files written in that run** are uploaded to Open WebUI (matches incremental Garmin lookback). Set **`OPENWEBUI_SYNC_ALL=true`** once to backfill every local file the server diff marks as out of date.
 
-With `OPENWEBUI_KNOWLEDGE_ID` set, files are stored under **`OUTPUT_DIR/<OPENWEBUI_KNOWLEDGE_ID>/`** by default (`OPENWEBUI_KB_SUBDIR=true`). Use **`OPENWEBUI_KB_FOLDER`** (e.g. `Activities`) to match a folder inside that knowledge base; manifest paths look like `Activities/2026/10/running_12345678.md`. Set `OPENWEBUI_KB_SUBDIR=false` to skip the knowledge-id segment on disk.
+With `OPENWEBUI_KNOWLEDGE_ID` set, files are stored under **`OUTPUT_DIR/<OPENWEBUI_KNOWLEDGE_ID>/`** by default (`OPENWEBUI_KB_SUBDIR=true`). Use **`OPENWEBUI_KB_FOLDER`** (e.g. `Activities`) to match a folder inside that knowledge base; manifest paths look like `Activities/2026/10/2026-10-21_08-19-35_running.md`. Set `OPENWEBUI_KB_SUBDIR=false` to skip the knowledge-id segment on disk.
 
 **Quick test** (narrow Garmin window, then vector push):
 
@@ -73,7 +73,7 @@ If Open WebUI sync fails, Garmin export still completes; the error is logged at 
 ### Prerequisites
 
 1. Copy and edit credentials: `cp .env.example .env` (only `GARMIN_EMAIL` and `GARMIN_PASSWORD` are required for Compose).
-2. Activity files are stored on the **`garmin_data` Docker volume** at `/data` inside the container (`YYYY/MM/{type}_{id}.md`). To use a host folder instead, replace `garmin_data:/data` with a bind mount in `docker-compose.yml`.
+2. Activity files are stored on the **`garmin_data` Docker volume** at `/data` inside the container (`YYYY/MM/YYYY-MM-DD_HH-MM-SS_{type}.md`, local start time). To use a host folder instead, replace `garmin_data:/data` with a bind mount in `docker-compose.yml`.
 3. Build and run:
 
 ```bash

@@ -4,7 +4,7 @@ Instructions for humans and coding agents working in **garmin-collector**.
 
 ## What this project does
 
-Syncs Garmin Connect activities via the [`garminconnect`](https://github.com/cyberjunky/python-garminconnect) library into **one Markdown file per activity** under `YYYY/MM/{type}_{activityId}.md`, with enriched sections (weather, elevation, splits, zones, gear). Cloud edits replace the file; user **session notes** are kept when present (empty placeholder is omitted). Sync uses a date range: first run (no monthly files yet) defaults to **Jan 1 of the current year → today**; later runs default to the **last 7 days**. Session tokens are cached on disk when possible.
+Syncs Garmin Connect activities via the [`garminconnect`](https://github.com/cyberjunky/python-garminconnect) library into **one Markdown file per activity** under `YYYY/MM/YYYY-MM-DD_HH-MM-SS_{type}.md` (local start time; activity ID only in file metadata), with enriched sections (weather, elevation, splits, zones, gear). Cloud edits replace the file; user **session notes** are kept when present (empty placeholder is omitted). Sync uses a date range: first run (no monthly files yet) defaults to **Jan 1 of the current year → today**; later runs default to the **last 7 days**. Session tokens are cached on disk when possible.
 
 ## Repository layout
 
@@ -45,7 +45,7 @@ After changing dependencies, run `pdm lock` / `pdm install` locally and ensure `
 |----------|----------|---------|--------|
 | `GARMIN_EMAIL` | yes | — | Garmin account email |
 | `GARMIN_PASSWORD` | yes | — | Garmin account password |
-| `OUTPUT_DIR` | no | `/data` | Activity Markdown tree (`YYYY/MM/{type}_{id}.md`) |
+| `OUTPUT_DIR` | no | `/data` | Activity Markdown tree (`YYYY/MM/YYYY-MM-DD_HH-MM-SS_{type}.md`) |
 | `TOKEN_DIR` | no | `/tokens` | Persisted `garth` session tokens |
 | `SYNC_START` / `SYNC_END` | no | — | Inclusive window (`YYYY-MM-DD`); overrides lookback / first-sync defaults |
 | `SYNC_LOOKBACK_DAYS` | no | `7` | Incremental window when monthly files already exist; default set in `docker-compose.yml` for Docker |

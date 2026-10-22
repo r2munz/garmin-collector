@@ -13,7 +13,11 @@ from typing import Any
 
 import requests
 
-from garmin_collector.activity_store import ACTIVITY_FILE_PATTERN, LEGACY_MONTHLY_FILE_PATTERN
+from garmin_collector.activity_store import (
+    ACTIVITY_FILE_PATTERN,
+    LEGACY_MONTHLY_FILE_PATTERN,
+    LEGACY_PER_ACTIVITY_FILE_PATTERN,
+)
 from garmin_collector.paths import knowledge_folder_name, knowledge_relative_path, strip_kb_folder_prefix
 
 logger = logging.getLogger(__name__)
@@ -119,7 +123,11 @@ def _replacement_file_ids(
 
 
 def _is_activity_markdown(name: str) -> bool:
-    return bool(ACTIVITY_FILE_PATTERN.match(name) or LEGACY_MONTHLY_FILE_PATTERN.match(name))
+    return bool(
+        ACTIVITY_FILE_PATTERN.match(name)
+        or LEGACY_PER_ACTIVITY_FILE_PATTERN.match(name)
+        or LEGACY_MONTHLY_FILE_PATTERN.match(name)
+    )
 
 
 def build_manifest(output_dir: Path) -> list[dict[str, Any]]:
